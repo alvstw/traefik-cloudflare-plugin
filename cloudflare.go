@@ -16,6 +16,7 @@ const (
 )
 
 type Config struct {
+	ServeTrustedOnly      bool     `json:"serveTrustedOnly,omitempty"`
 	TrustedCIDRs          []string `json:"trustedCIDRs,omitempty"`
 	RefreshInterval       string   `json:"refreshInterval,omitempty"`
 	OverwriteForwardedFor bool     `json:"overwriteForwardedFor,omitempty"`
@@ -23,6 +24,7 @@ type Config struct {
 
 func CreateConfig() *Config {
 	return &Config{
+		ServeTrustedOnly:      true,
 		TrustedCIDRs:          nil,
 		RefreshInterval:       defaultRefresh,
 		OverwriteForwardedFor: true,
@@ -33,6 +35,7 @@ type Cloudflare struct {
 	next                  http.Handler
 	name                  string
 	checker               ipChecker
+	serveTrustedOnly      bool
 	overwriteForwardedFor bool
 }
 
@@ -44,6 +47,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	c := &Cloudflare{
 		next:                  next,
 		name:                  name,
+		serveTrustedOnly:      config.ServeTrustedOnly,
 		overwriteForwardedFor: config.OverwriteForwardedFor,
 	}
 
@@ -105,7 +109,7 @@ func (c *Cloudflare) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allow, err := c.checker.CheckIP(r.Context(), sip)
+	trusted, err := c.checker.CheckIP(r.Context(), sip)
 	if err != nil {
 		log.Println(err)
 
@@ -114,13 +118,13 @@ func (c *Cloudflare) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !allow {
+	if c.serveTrustedOnly && !trusted {
 		code := http.StatusForbidden
 		http.Error(w, http.StatusText(code), code)
 		return
 	}
 
-	if c.overwriteForwardedFor {
+	if c.overwriteForwardedFor && trusted {
 		err = overwriteForwardedFor(r)
 		if err != nil {
 			code := http.StatusBadRequest
